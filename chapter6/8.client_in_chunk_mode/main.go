@@ -4,57 +4,59 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httputil"
-	"strconv"
+	"strings"
+	"time"
 )
 
 func main() {
-	conn, err := net.Dial("tcp", "localhost:8888")
+	listener, err := net.Listen("tcp", "localhost:8888")
 	if err != nil {
 		panic(err)
 	}
-	defer conn.Close()
-	request, err := http.NewRequest(
-		"GET",
-		"http://localhost:8888",
-		nil)
-	if err != nil {
-		panic(err)
-	}
-	err = request.Write(conn)
-	if err != nil {
-		panic(err)
-	}
-	reader := bufio.NewReader(conn)
-	response, err := http.ReadResponse(reader, request)
-	if err != nil {
-		panic(err)
-	}
-	dump, err := httputil.DumpResponse(response, false)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(string(dump))
-	if len(response.TransferEncoding) < 1 || response.TransferEncoding[0] != "chunked" {
-		panic("wrong transder encoding")
-	}
+	fmt.Println("Server is running at localhost:8888")
 	for {
-		sizeStr, err := reader.ReadBytes('\n')
-		if err == io.EOF {
-			break
-		}
-		size, err := strconv.ParseInt(string(sizeStr[:len(sizeStr)-2]), 16, 64)
-		if size == 0 {
-			break
-		}
+		conn, err := listener.Accept()
 		if err != nil {
 			panic(err)
 		}
-		line := make([]byte, int(size))
-		io.ReadFull(reader, line)
-		reader.Discard(2)
-		fmt.Printf(" %d bytes: %s\n", size, string(line))
+		go func() {
+			defer conn.Close()
+			fmt.Printf("Accept %v\n", conn.RemoteAddr())
+
+			for {
+				conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+				request, err := http.ReadRequest(bufio.NewReader(conn))
+				if err != nil {
+					neterr, ok := err.(net.Error)
+					if ok && neterr.Timeout() {
+						fmt.Println("timeout")
+						break
+					} else if err == io.EOF {
+						break
+					}
+					panic(err)
+				}
+
+				dump, err := httputil.DumpRequest(request, true)
+				if err != nil {
+					panic(err)
+				}
+				fmt.Println(string(dump))
+				content := "Hello World\n"
+
+				response := http.Response{
+					StatusCode:    200,
+					ProtoMajor:    1,
+					ProtoMinor:    1,
+					ContentLength: int64(len(content)),
+					Body:          ioutil.NopCloser(strings.NewReader(content)),
+				}
+				response.Write(conn)
+			}
+		}()
 	}
 }
