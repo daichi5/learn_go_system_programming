@@ -1,0 +1,9 @@
+package hoge
+
+func test () {
+    
+}
+
+func main() {
+
+}
